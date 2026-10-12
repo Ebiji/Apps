@@ -32,11 +32,13 @@
       <span class="time" id="time">0:00 / 0:00</span>
       <span class="spacer"></span>
       <div class="ab" role="group" aria-label="A/B比較">
-        <button class="btn" id="abB" type="button" disabled>マスタリング後</button>
         <button class="btn on" id="abA" type="button">元の音</button>
+        <button class="btn" id="abP" type="button" title="スライダーを動かすと、その場で音が変わります">手動プレビュー</button>
+        <button class="btn" id="abB" type="button" disabled>マスタリング済み</button>
       </div>
       <label class="chk" title="元の音の音量を、マスタリング後に合わせて比較します"><input type="checkbox" id="match" checked> 音量を揃える</label>
     </div>
+    <p class="muted" id="previewHint" hidden>🎛 手動プレビュー中: ③のスライダーや視聴条件を操作すると、再生中の音がその場で変わります。音量は元の音に揃えているので、音色の違いだけを比べられます。最終的な音量は「④ マスタリング開始」で目標ラウドネスに調整されます。</p>
     <div class="meters">
       <canvas id="spec" height="120" aria-label="スペクトラム"></canvas>
       <div class="stats" id="stats">
@@ -69,7 +71,7 @@
   </section>
 
   <section class="card">
-    <div class="sechead"><h2>③ 詳細パラメーター</h2><button class="btn small" id="reset" type="button">すべてリセット</button></div>
+    <div class="sechead"><h2>③ 手動調整（詳細パラメーター）</h2><button class="btn small" id="reset" type="button">すべてリセット</button></div>
     <div id="controls" class="controls"></div>
   </section>
 
@@ -82,7 +84,10 @@
     </div>
     <div class="result" id="result" hidden>
       <p class="muted" id="resultInfo"></p>
-      <p class="muted">上の「マスタリング後 / 元の音」で聴き比べてから、気に入ったら保存してください。</p>
+      <p class="muted">周波数バランス（曲全体の平均・音量差を除去）: <span style="color:var(--muted)">━ 元の音</span>　<span style="color:var(--accent)">━ マスタリング後</span></p>
+      <canvas id="cmp" height="150" aria-label="周波数バランスの比較"></canvas>
+      <p class="muted" id="toneInfo"></p>
+      <p class="muted">上の「元の音 / マスタリング済み」で聴き比べてから、気に入ったら保存してください。</p>
     </div>
   </section>
 

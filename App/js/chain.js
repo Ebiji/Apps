@@ -52,8 +52,11 @@ export function createChain(ctx) {
   const sum = gain(1);
   air.connect(sum);
 
-  const bLp = bq('lowpass', 150, 0.707), bSh = shaper(satCurve(4, 0.12)), bHp = bq('highpass', 90, 0.707), bG = gain(0);
-  air.connect(bLp); bLp.connect(bSh); bSh.connect(bHp); bHp.connect(bG); bG.connect(sum);
+  // 低音エンハンサー: 100Hz以下(基音)だけを取り出して歪ませ、生じた倍音(2f,3f…)のみを足す。
+  // 基音そのものは足さない(24dB/oct)ので、小さなスピーカーでも「低音が鳴っている」と知覚させる。
+  const bLp = bq('lowpass', 100, 0.707), bLp2 = bq('lowpass', 100, 0.707), bSh = shaper(satCurve(4, 0.12));
+  const bHp = bq('highpass', 130, 0.707), bHp2 = bq('highpass', 130, 0.707), bG = gain(0);
+  air.connect(bLp); bLp.connect(bLp2); bLp2.connect(bSh); bSh.connect(bHp); bHp.connect(bHp2); bHp2.connect(bG); bG.connect(sum);
 
   const xHp = bq('highpass', 3500, 0.707), xSh = shaper(satCurve(3, 0.2)), xHp2 = bq('highpass', 5000, 0.707), xG = gain(0);
   air.connect(xHp); xHp.connect(xSh); xSh.connect(xHp2); xHp2.connect(xG); xG.connect(sum);
@@ -91,7 +94,7 @@ export function createChain(ctx) {
     set(hp.frequency, p.hp);
     set(bass.gain, p.bass); set(lowmid.gain, p.lowmid); set(mid.gain, p.mid);
     set(presence.gain, p.presence); set(treble.gain, p.treble); set(air.gain, p.air);
-    set(bG.gain, p.bassEnh * 0.6);
+    set(bG.gain, p.bassEnh * 0.7);
     set(xG.gain, p.exciter * 0.5);
     set(wG.gain, p.warmth * 0.45);
     set(sPos.gain, p.width); set(sNeg.gain, -p.width);

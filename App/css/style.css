@@ -86,3 +86,7 @@ select { background: var(--bg); color: var(--text); border: 1px solid var(--line
 .result p { margin: 2px 0; }
 .stale { color: var(--warn); }
 .ok { color: var(--ok); }
+
+#cmp { height: 150px; margin: 6px 0; }
+.ab { flex-wrap: nowrap; }
+.ab .btn:not(:first-child):not(:last-child) { border-radius: 0; margin-left: -1px; }

@@ -1,6 +1,7 @@
 import { PARAMS, GROUPS, PRESETS, EXAMPLES, defaults } from './params.js';
 import { interpret } from './nlp.js';
-import { renderChain, computeAutoGain } from './chain.js';
+import { createChain, renderChain, computeAutoGain } from './chain.js';
+import { avgSpectrum, toneChange } from './analysis.js';
 import { bufferLoudness, samplePeakDb } from './loudness.js';
 import { encodeWav } from './wav.js';
 
@@ -13,7 +14,7 @@ let params = defaults();
 let undoStack = [];
 let buffer = null, mastered = null, masteredLufs = -Infinity, masteredPeak = -Infinity;
 let fileName = 'track', origLufs = -Infinity, origPeakLin = 1;
-let ctx = null, analyser = null, outGain = null, src = null;
+let ctx = null, chain = null, previewDb = 0, analyser = null, outGain = null, src = null;
 let playing = false, startedAt = 0, offset = 0, abMode = 'A', busy = false;
 let activePreset = null;
 
@@ -24,6 +25,8 @@ function ensureAudio() {
   if (ctx) return;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   outGain = ctx.createGain();
+  chain = createChain(ctx); chain.output.connect(outGain);
+  applyPreview(true);
   analyser = ctx.createAnalyser(); analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.8;
   outGain.connect(analyser); analyser.connect(ctx.destination);
 }
@@ -49,7 +52,7 @@ function play() {
   const s = ctx.createBufferSource();
   s.buffer = current(); s.loop = $('loop').checked;
   outGain.gain.value = levelMatchGain();
-  s.connect(outGain);
+  s.connect(abMode === 'P' ? chain.input : outGain);
   if (offset >= buffer.duration - 0.01) offset = 0;
   s.start(0, offset);
   startedAt = ctx.currentTime - offset;
@@ -74,9 +77,36 @@ function setAB(mode) {
   if (mode === 'B' && !mastered) return;
   const was = playing, pos = position();
   abMode = mode;
-  $('abA').classList.toggle('on', mode === 'A'); $('abB').classList.toggle('on', mode === 'B');
+  ensureAudio(); applyPreview(true);
+  $('abA').classList.toggle('on', mode === 'A'); $('abP').classList.toggle('on', mode === 'P'); $('abB').classList.toggle('on', mode === 'B');
+  $('previewHint').hidden = mode !== 'P';
   drawWaveCache();
   if (was) { offset = pos; play(); } else if (outGain) outGain.gain.value = levelMatchGain();
+}
+
+// ---------------- リアルタイム試聴（手動調整） ----------------
+// プレビューは「元の音と同じ音量」に揃える（音量差ではなく音色の違いだけを聴き比べるため）。
+let pvTimer = null, pvToken = 0, pvBusy = false, pvDirty = false;
+function applyPreview(immediate = false) {
+  if (!chain) return;
+  chain.apply(params, { makeupDb: params.auto ? previewDb : params.gain, limiter: true, immediate });
+}
+function schedulePreviewGain() {
+  if (!buffer || !params.auto) return;
+  clearTimeout(pvTimer);
+  pvTimer = setTimeout(runPreviewGain, 500);
+}
+async function runPreviewGain() {
+  if (pvBusy) { pvDirty = true; return; }
+  pvBusy = true;
+  const token = ++pvToken;
+  try {
+    const target = isFinite(origLufs) ? origLufs : params.loudness;
+    const r = await computeAutoGain(buffer, { ...params, loudness: target }, { maxSeconds: 60 });
+    if (token === pvToken) { previewDb = r.gainDb; applyPreview(); }
+  } catch (e) { console.error(e); }
+  pvBusy = false;
+  if (pvDirty) { pvDirty = false; runPreviewGain(); }
 }
 
 // ---------------- マスタリング ----------------
@@ -99,6 +129,7 @@ async function runMaster() {
     $('resultInfo').textContent = `仕上がり: ${fmtDb(masteredLufs)} LUFS ／ ピーク ${fmtDb(masteredPeak)} dB（元: ${fmtDb(origLufs)} LUFS）`;
     $('stOut').textContent = `${fmtDb(masteredLufs)} LUFS`;
     $('save').disabled = false; stat('saveStatus', '');
+    drawCompare();
     setAB('B');
   } catch (e) {
     console.error(e); stat('masterStatus', `失敗: ${e.message}`, 'stale');
@@ -107,6 +138,7 @@ async function runMaster() {
 }
 
 function markStale() {
+  applyPreview(); schedulePreviewGain();
   if (!mastered) return;
   $('save').disabled = true;
   stat('masterStatus', '条件が変更されました。もう一度「マスタリング開始」を押してください。', 'stale');
@@ -242,11 +274,11 @@ async function loadFile(file) {
   $('stPeak').textContent = `${fmtDb(pk)} dB`;
   origPeakLin = Math.pow(10, pk / 20) || 1;
   mastered = null; masteredLufs = -Infinity; abMode = 'A';
-  $('abA').classList.add('on'); $('abB').classList.remove('on'); $('abB').disabled = true;
+  abMode = 'A'; previewDb = 0; $('abA').classList.add('on'); $('abP').classList.remove('on'); $('abB').classList.remove('on'); $('abB').disabled = true; $('previewHint').hidden = true;
   $('result').hidden = true; $('stOut').textContent = '—'; $('save').disabled = true; stat('saveStatus', '');
   for (const id of ['play', 'stop', 'master']) $(id).disabled = false;
   stat('masterStatus', '条件を設定して「マスタリング開始」を押してください。');
-  offset = 0; drawWaveCache(); updateTransport();
+  offset = 0; drawWaveCache(); updateTransport(); schedulePreviewGain();
 }
 
 // ---------------- 描画 ----------------
@@ -318,6 +350,27 @@ function draw() {
   requestAnimationFrame(draw);
 }
 
+function drawCompare() {
+  const [w, h] = sizeCanvas($('cmp'));
+  const g = $('cmp').getContext('2d'); g.clearRect(0, 0, w, h);
+  if (!mastered) return;
+  const a = avgSpectrum(buffer), b = avgSpectrum(mastered);
+  const db = x => 10 * Math.log10(x + 1e-20);
+  const tot = x => x.power.reduce((s, v) => s + v, 0);
+  const off = db(tot(a)) - db(tot(b)); // 全体の音量差を除いて「音色」だけ比べる
+  const A = a.power.map(db), B = b.power.map(v => db(v) + off);
+  const top = Math.max(...A, ...B) + 3, bot = top - 60;
+  const X = i => i / (A.length - 1) * w, Y = v => h - Math.max(0, Math.min(1, (v - bot) / (top - bot))) * h;
+  g.font = `${11 * (devicePixelRatio || 1)}px sans-serif`;
+  for (const f of [50, 100, 500, 1000, 5000, 10000]) {
+    const x = Math.log10(f / 20) / 3 * w; g.fillStyle = css('--line'); g.fillRect(x, 0, 1, h);
+    g.fillStyle = css('--muted'); g.fillText(f >= 1000 ? `${f / 1000}k` : f, x + 3, h - 4);
+  }
+  const line = (arr, color, width) => { g.beginPath(); arr.forEach((v, i) => (i ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)))); g.strokeStyle = color; g.lineWidth = width * (devicePixelRatio || 1); g.stroke(); };
+  line(A, css('--muted'), 1.5); line(B, css('--accent'), 2.5);
+  $('toneInfo').innerHTML = toneChange(a, b).map(t => `${t.name} <b class="${Math.abs(t.db) >= 1 ? 'ok' : ''}">${t.db > 0 ? '+' : ''}${t.db.toFixed(1)} dB</b>`).join('　／　');
+}
+
 // ---------------- 書き出し ----------------
 async function loadLame() {
   if (window.lamejs) return window.lamejs;
@@ -376,7 +429,7 @@ $('play').addEventListener('click', () => (playing ? pause() : play()));
 $('stop').addEventListener('click', stop);
 $('loop').addEventListener('change', () => { if (src) src.loop = $('loop').checked; });
 wave.addEventListener('click', e => seek((e.clientX - wave.getBoundingClientRect().left) / wave.clientWidth));
-$('abA').addEventListener('click', () => setAB('A')); $('abB').addEventListener('click', () => setAB('B'));
+$('abA').addEventListener('click', () => setAB('A')); $('abP').addEventListener('click', () => setAB('P')); $('abB').addEventListener('click', () => setAB('B'));
 $('match').addEventListener('change', () => { if (outGain) outGain.gain.value = levelMatchGain(); });
 $('nlApply').addEventListener('click', applyNl);
 $('nl').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.ctrlKey || e.metaKey || !e.shiftKey)) { e.preventDefault(); applyNl(); } });
