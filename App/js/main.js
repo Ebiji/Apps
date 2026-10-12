@@ -4,6 +4,7 @@ import { createChain, renderChain, computeAutoGain } from './chain.js';
 import { avgSpectrum, toneChange } from './analysis.js';
 import { bufferLoudness, samplePeakDb } from './loudness.js';
 import { encodeWav } from './wav.js';
+import { zipSingle } from './zip.js';
 
 const $ = id => document.getElementById(id);
 const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -397,15 +398,22 @@ function encodeMp3(lamejs, left, right, sr, kbps) {
 const MIME = { wav: 'audio/wav', mp3: 'audio/mpeg' };
 const saveBase = () => ($('saveName').value.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\.(wav|mp3)$/i, '')) || `${fileName}_mastered`;
 
+// 公開ページ(サンドボックス)では標準のダウンロードが使えず、プラットフォームの downloads 機能経由で保存する。
+// ただしその許可形式に wav/mp3 は無いため、ZIP に入れて渡す。
+async function getDownloads() {
+  try { return window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch { return null; }
+}
+
 async function saveFile() {
   if (!mastered) return;
   const btn = $('save'), fmt = $('fmt').value;
   const ext = fmt.startsWith('mp3') ? 'mp3' : 'wav', name = `${saveBase()}.${ext}`;
   btn.disabled = true;
   try {
+    const cap = await getDownloads();
     // 1) 保存先ダイアログ（Chrome / Edge）。ユーザー操作の直後に開く必要があるので、エンコードより先に呼ぶ。
     let handle = null, fellBack = '';
-    if (window.showSaveFilePicker) {
+    if (!cap && window.showSaveFilePicker) {
       try {
         handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: ext.toUpperCase(), accept: { [MIME[ext]]: ['.' + ext] } }] });
       } catch (e) {
@@ -424,7 +432,16 @@ async function saveFile() {
     }
     const mb = (blob.size / 1048576).toFixed(1);
     // 3) 書き込み
-    if (handle) {
+    if (cap) {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const zip = zipSingle(name, bytes);
+      try {
+        await cap.save({ filename: `${saveBase()}.zip`, data: zip });
+        stat('saveStatus', `ZIPで保存しました（${(zip.size / 1048576).toFixed(1)} MB）。解凍すると ${name} が入っています。`, 'ok');
+      } catch (e) {
+        stat('saveStatus', e && e.code === 'declined' ? '保存をキャンセルしました' : `保存できませんでした（${(e && (e.code || e.message)) || '不明なエラー'}）`, e && e.code === 'declined' ? '' : 'stale');
+      }
+    } else if (handle) {
       const w = await handle.createWritable(); await w.write(blob); await w.close();
       stat('saveStatus', `保存しました: 選んだ場所の「${handle.name}」（${mb} MB）`, 'ok');
     } else {
@@ -460,6 +477,7 @@ $('nlUndo').addEventListener('click', () => {
 });
 $('reset').addEventListener('click', () => { activePreset = null; $('presetdesc').textContent = ''; setAll({ ...defaults(), auto: params.auto }); });
 $('master').addEventListener('click', runMaster);
+getDownloads().then(c => { if (c) $('zipNote').hidden = false; });
 $('save').addEventListener('click', saveFile);
 addEventListener('keydown', e => {
   if (e.code === 'Space' && !/INPUT|TEXTAREA|SELECT|BUTTON/.test(document.activeElement.tagName)) { e.preventDefault(); if (buffer) (playing ? pause() : play()); }
