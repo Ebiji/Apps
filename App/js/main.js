@@ -268,6 +268,7 @@ async function loadFile(file) {
     $('fileinfo').textContent = 'デコードに失敗しました（壊れたファイル、または未対応の形式）'; return;
   }
   fileName = file.name.replace(/\.[^.]+$/, '');
+  $('saveName').value = `${fileName}_mastered`;
   origLufs = bufferLoudness(buffer);
   const pk = samplePeakDb(buffer);
   $('fileinfo').textContent = `${file.name} ・ ${fmtTime(buffer.duration)} ・ ${buffer.sampleRate / 1000}kHz ・ ${buffer.numberOfChannels === 1 ? 'モノラル' : 'ステレオ'}`;
@@ -393,24 +394,44 @@ function encodeMp3(lamejs, left, right, sr, kbps) {
   const e = enc.flush(); if (e.length) out.push(new Uint8Array(e));
   return new Blob(out, { type: 'audio/mpeg' });
 }
+const MIME = { wav: 'audio/wav', mp3: 'audio/mpeg' };
+const saveBase = () => ($('saveName').value.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\.(wav|mp3)$/i, '')) || `${fileName}_mastered`;
+
 async function saveFile() {
   if (!mastered) return;
   const btn = $('save'), fmt = $('fmt').value;
+  const ext = fmt.startsWith('mp3') ? 'mp3' : 'wav', name = `${saveBase()}.${ext}`;
   btn.disabled = true;
   try {
-    const ch = [mastered.getChannelData(0), mastered.getChannelData(1)];
-    let blob, ext;
-    if (fmt.startsWith('mp3')) {
-      stat('saveStatus', 'MP3にエンコード中…');
-      await tick();
-      const lame = await loadLame();
-      blob = encodeMp3(lame, ch[0], ch[1], mastered.sampleRate, +fmt.split('-')[1]); ext = 'mp3';
-    } else {
-      blob = encodeWav(ch, mastered.sampleRate, fmt === 'wav24' ? 24 : 16); ext = 'wav';
+    // 1) 保存先ダイアログ（Chrome / Edge）。ユーザー操作の直後に開く必要があるので、エンコードより先に呼ぶ。
+    let handle = null, fellBack = '';
+    if (window.showSaveFilePicker) {
+      try {
+        handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: ext.toUpperCase(), accept: { [MIME[ext]]: ['.' + ext] } }] });
+      } catch (e) {
+        if (e.name === 'AbortError') { stat('saveStatus', '保存をキャンセルしました'); btn.disabled = false; return; }
+        fellBack = '（この環境では保存先ダイアログを開けないため、通常のダウンロードにします）';
+      }
     }
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${fileName}_mastered.${ext}`;
-    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    stat('saveStatus', `保存しました: ${a.download}（${(blob.size / 1048576).toFixed(1)} MB）`, 'ok');
+    // 2) エンコード
+    let blob;
+    const ch = [mastered.getChannelData(0), mastered.getChannelData(1)];
+    if (ext === 'mp3') {
+      stat('saveStatus', 'MP3にエンコード中…'); await tick();
+      blob = encodeMp3(await loadLame(), ch[0], ch[1], mastered.sampleRate, +fmt.split('-')[1]);
+    } else {
+      blob = encodeWav(ch, mastered.sampleRate, fmt === 'wav24' ? 24 : 16);
+    }
+    const mb = (blob.size / 1048576).toFixed(1);
+    // 3) 書き込み
+    if (handle) {
+      const w = await handle.createWritable(); await w.write(blob); await w.close();
+      stat('saveStatus', `保存しました: 選んだ場所の「${handle.name}」（${mb} MB）`, 'ok');
+    } else {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      stat('saveStatus', `ダウンロードしました: ${name}（${mb} MB）。保存先はブラウザの設定で決まります。${fellBack}`, 'ok');
+    }
   } catch (e) {
     console.error(e); stat('saveStatus', `失敗: ${e.message}`, 'stale');
   }

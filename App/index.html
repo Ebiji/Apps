@@ -102,9 +102,11 @@
           <option value="mp3-192">MP3 192kbps</option>
         </select>
       </label>
-      <button class="btn primary" id="save" type="button" disabled>💾 保存（ダウンロード）</button>
+      <label>ファイル名 <input type="text" id="saveName" placeholder="曲名_mastered" size="26"></label>
+      <button class="btn primary" id="save" type="button" disabled>💾 保存先を選んで保存</button>
       <span id="saveStatus" class="muted" aria-live="polite"></span>
     </div>
+    <p class="muted">Chrome / Edge では「名前を付けて保存」ダイアログで保存先フォルダとファイル名を指定できます。Firefox / Safari では既定のダウンロードフォルダに保存されます（ブラウザ設定の「ダウンロード前に保存場所を確認する」をオンにすると毎回選べます）。</p>
   </section>
 </main>
 
