@@ -1,6 +1,6 @@
 import { PARAMS, GROUPS, PRESETS, EXAMPLES, defaults } from './params.js';
 import { interpret } from './nlp.js';
-import { createChain, renderChain, computeAutoGain } from './chain.js';
+import { renderChain, computeAutoGain } from './chain.js';
 import { bufferLoudness, samplePeakDb } from './loudness.js';
 import { encodeWav } from './wav.js';
 
@@ -11,34 +11,27 @@ const fmtDb = v => (isFinite(v) ? v.toFixed(1) : '−∞');
 // ---------------- 状態 ----------------
 let params = defaults();
 let undoStack = [];
-let buffer = null, fileName = 'track', origLufs = -Infinity;
-let autoDb = 0, autoLufs = -Infinity;
-let ctx = null, chain = null, procGain = null, origGain = null, analyser = null, src = null;
-let playing = false, startedAt = 0, offset = 0, abMode = 'B';
+let buffer = null, mastered = null, masteredLufs = -Infinity, masteredPeak = -Infinity;
+let fileName = 'track', origLufs = -Infinity, origPeakLin = 1;
+let ctx = null, analyser = null, outGain = null, src = null;
+let playing = false, startedAt = 0, offset = 0, abMode = 'A', busy = false;
 let activePreset = null;
 
-// ---------------- オーディオ ----------------
+// ---------------- 再生 ----------------
+const current = () => (abMode === 'B' && mastered ? mastered : buffer);
+
 function ensureAudio() {
   if (ctx) return;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
-  chain = createChain(ctx);
-  procGain = ctx.createGain(); origGain = ctx.createGain();
+  outGain = ctx.createGain();
   analyser = ctx.createAnalyser(); analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.8;
-  chain.output.connect(procGain); procGain.connect(analyser);
-  origGain.connect(analyser); analyser.connect(ctx.destination);
-  applyChain(true);
+  outGain.connect(analyser); analyser.connect(ctx.destination);
 }
 
-function makeupDb() { return params.auto ? autoDb : params.gain; }
-
-function applyChain(immediate = false) {
-  if (!ctx) return;
-  chain.apply(params, { makeupDb: makeupDb(), limiter: true, immediate });
-  const t = ctx.currentTime;
-  const matchDb = $('match').checked && params.auto && isFinite(origLufs) ? Math.min(12, Math.max(-24, autoLufs - origLufs)) : 0;
-  const origLin = Math.pow(10, matchDb / 20);
-  procGain.gain.setTargetAtTime(abMode === 'B' ? 1 : 0, t, 0.015);
-  origGain.gain.setTargetAtTime(abMode === 'A' ? origLin : 0, t, 0.015);
+// 元の音を聴くときは、仕上がりと同じ音量感に揃える（クリップしない範囲で）
+function levelMatchGain() {
+  if (abMode !== 'A' || !mastered || !$('match').checked || !isFinite(origLufs) || !isFinite(masteredLufs)) return 1;
+  return Math.min(Math.pow(10, (masteredLufs - origLufs) / 20), 1 / origPeakLin);
 }
 
 function position() {
@@ -54,15 +47,15 @@ function play() {
   if (ctx.state === 'suspended') ctx.resume();
   stopSource();
   const s = ctx.createBufferSource();
-  s.buffer = buffer; s.loop = $('loop').checked;
-  s.connect(chain.input); s.connect(origGain);
+  s.buffer = current(); s.loop = $('loop').checked;
+  outGain.gain.value = levelMatchGain();
+  s.connect(outGain);
   if (offset >= buffer.duration - 0.01) offset = 0;
   s.start(0, offset);
   startedAt = ctx.currentTime - offset;
   s.onended = () => { if (src === s && !s.loop) { playing = false; offset = 0; updateTransport(); } };
   src = s; playing = true; updateTransport();
 }
-
 function stopSource() {
   if (src) { src.onended = null; try { src.stop(); } catch {} src.disconnect(); src = null; }
 }
@@ -77,34 +70,47 @@ function updateTransport() {
   $('play').textContent = playing ? '❚❚ 一時停止' : '▶ 再生';
   $('time').textContent = buffer ? `${fmtTime(position())} / ${fmtTime(buffer.duration)}` : '0:00 / 0:00';
 }
+function setAB(mode) {
+  if (mode === 'B' && !mastered) return;
+  const was = playing, pos = position();
+  abMode = mode;
+  $('abA').classList.toggle('on', mode === 'A'); $('abB').classList.toggle('on', mode === 'B');
+  drawWaveCache();
+  if (was) { offset = pos; play(); } else if (outGain) outGain.gain.value = levelMatchGain();
+}
 
-// ---------------- 自動ラウドネス ----------------
-let autoToken = 0, autoRunning = false, autoDirty = false, autoTimer = null;
-function scheduleAuto() {
-  if (!buffer || !params.auto) { updateStats(); return; }
-  clearTimeout(autoTimer);
-  $('autoStat').textContent = 'ラウドネス計算待ち…';
-  autoTimer = setTimeout(runAuto, 450);
-}
-async function runAuto() {
-  if (autoRunning) { autoDirty = true; return; }
-  autoRunning = true;
-  const token = ++autoToken;
-  $('autoStat').textContent = 'ラウドネス計算中…';
+// ---------------- マスタリング ----------------
+const tick = () => new Promise(r => setTimeout(r, 30));
+const stat = (id, text, cls = '') => { const e = $(id); e.textContent = text; e.className = `muted ${cls}`.trim(); };
+
+async function runMaster() {
+  if (!buffer || busy) return;
+  busy = true; $('master').disabled = true; $('save').disabled = true;
   try {
-    const r = await computeAutoGain(buffer, params, { maxSeconds: 90 });
-    if (token === autoToken) { autoDb = r.gainDb; autoLufs = r.lufs; applyChain(); }
-  } catch (e) { console.error(e); }
-  autoRunning = false;
-  if (autoDirty) { autoDirty = false; runAuto(); return; }
-  updateStats();
+    let g = params.gain;
+    if (params.auto) { stat('masterStatus', '① ラウドネスを測定中…'); await tick(); g = (await computeAutoGain(buffer, params)).gainDb; }
+    stat('masterStatus', '② マスタリング処理中…'); await tick();
+    const out = await renderChain(buffer, params, { makeupDb: g, limiter: true });
+    masteredLufs = bufferLoudness(out); masteredPeak = samplePeakDb(out);
+    mastered = out;
+    $('abB').disabled = false;
+    stat('masterStatus', '✓ マスタリング完了。聴き比べて、よければ保存してください。', 'ok');
+    $('result').hidden = false;
+    $('resultInfo').textContent = `仕上がり: ${fmtDb(masteredLufs)} LUFS ／ ピーク ${fmtDb(masteredPeak)} dB（元: ${fmtDb(origLufs)} LUFS）`;
+    $('stOut').textContent = `${fmtDb(masteredLufs)} LUFS`;
+    $('save').disabled = false; stat('saveStatus', '');
+    setAB('B');
+  } catch (e) {
+    console.error(e); stat('masterStatus', `失敗: ${e.message}`, 'stale');
+  }
+  busy = false; $('master').disabled = false;
 }
-function updateStats() {
-  $('stOrig').textContent = buffer ? `${fmtDb(origLufs)} LUFS` : '—';
-  $('stOut').textContent = buffer ? `${params.auto ? params.loudness.toFixed(1) : '手動'} ${params.auto ? 'LUFS' : ''}` : '—';
-  $('autoStat').textContent = buffer && params.auto && isFinite(autoLufs)
-    ? `測定: 約 ${autoLufs.toFixed(1)} LUFS ／ 自動補正 ${autoDb >= 0 ? '+' : ''}${autoDb.toFixed(1)} dB`
-    : (params.auto ? '' : '手動ゲインで出力します');
+
+function markStale() {
+  if (!mastered) return;
+  $('save').disabled = true;
+  stat('masterStatus', '条件が変更されました。もう一度「マスタリング開始」を押してください。', 'stale');
+  stat('saveStatus', '※ 現在の条件では未マスタリングです');
 }
 
 // ---------------- パラメーター UI ----------------
@@ -118,7 +124,6 @@ function buildControls() {
       const a = document.createElement('label'); a.className = 'autorow';
       a.innerHTML = '<input type="checkbox" id="auto" checked> 目標ラウドネスに自動で合わせる';
       g.append(a);
-      const st = document.createElement('div'); st.className = 'autostat'; st.id = 'autoStat'; g.append(st);
     }
     for (const [key, d] of Object.entries(PARAMS)) {
       if (d.group !== gid) continue;
@@ -132,7 +137,7 @@ function buildControls() {
     }
     host.append(g);
   }
-  $('auto').addEventListener('change', e => { params.auto = e.target.checked; refreshUI(); applyChain(); scheduleAuto(); });
+  $('auto').addEventListener('change', e => { params.auto = e.target.checked; refreshUI(); markStale(); });
 }
 function fmtVal(key, v) {
   const d = PARAMS[key]; const n = d.step >= 1 ? v.toFixed(0) : d.step >= 0.1 ? v.toFixed(1) : v.toFixed(2);
@@ -148,18 +153,17 @@ function refreshUI() {
   rows.loudness.input.disabled = !params.auto;
   rows.gain.input.disabled = params.auto;
   document.querySelectorAll('.preset').forEach(b => b.classList.toggle('on', b.dataset.id === activePreset));
-  updateStats();
 }
 function setParam(key, v, fromUser) {
   params[key] = v;
   if (fromUser) { activePreset = null; }
   rows[key].out.textContent = fmtVal(key, v);
   if (fromUser) document.querySelectorAll('.preset').forEach(b => b.classList.remove('on'));
-  applyChain(); scheduleAuto();
+  markStale();
 }
 function setAll(next, { keepUndo = true } = {}) {
   if (keepUndo) { undoStack.push({ ...params }); $('nlUndo').disabled = false; }
-  params = next; refreshUI(); applyChain(); scheduleAuto();
+  params = next; refreshUI(); markStale();
 }
 
 // ---------------- 視聴条件 / 言語指示 ----------------
@@ -236,9 +240,13 @@ async function loadFile(file) {
   const pk = samplePeakDb(buffer);
   $('fileinfo').textContent = `${file.name} ・ ${fmtTime(buffer.duration)} ・ ${buffer.sampleRate / 1000}kHz ・ ${buffer.numberOfChannels === 1 ? 'モノラル' : 'ステレオ'}`;
   $('stPeak').textContent = `${fmtDb(pk)} dB`;
-  for (const id of ['play', 'stop', 'export']) $(id).disabled = false;
-  offset = 0; drawWaveCache(); updateTransport(); updateStats();
-  autoDb = 0; autoLufs = -Infinity; scheduleAuto();
+  origPeakLin = Math.pow(10, pk / 20) || 1;
+  mastered = null; masteredLufs = -Infinity; abMode = 'A';
+  $('abA').classList.add('on'); $('abB').classList.remove('on'); $('abB').disabled = true;
+  $('result').hidden = true; $('stOut').textContent = '—'; $('save').disabled = true; stat('saveStatus', '');
+  for (const id of ['play', 'stop', 'master']) $(id).disabled = false;
+  stat('masterStatus', '条件を設定して「マスタリング開始」を押してください。');
+  offset = 0; drawWaveCache(); updateTransport();
 }
 
 // ---------------- 描画 ----------------
@@ -254,13 +262,14 @@ function drawWaveCache() {
   const [w, h] = sizeCanvas(wave);
   waveImg = document.createElement('canvas'); waveImg.width = w; waveImg.height = h;
   const g = waveImg.getContext('2d');
-  g.fillStyle = css('--wave');
-  if (!buffer) return;
-  const ch = [...Array(buffer.numberOfChannels)].map((_, i) => buffer.getChannelData(i));
-  const per = buffer.length / w;
+  g.fillStyle = css(abMode === 'B' && mastered ? '--wave-played' : '--wave');
+  const wb = current();
+  if (!wb) return;
+  const ch = [...Array(wb.numberOfChannels)].map((_, i) => wb.getChannelData(i));
+  const per = wb.length / w;
   for (let x = 0; x < w; x++) {
     let mx = 0;
-    const a = Math.floor(x * per), b = Math.min(buffer.length, Math.floor((x + 1) * per));
+    const a = Math.floor(x * per), b = Math.min(wb.length, Math.floor((x + 1) * per));
     const stride = Math.max(1, Math.floor((b - a) / 64));
     for (const d of ch) for (let i = a; i < b; i += stride) { const v = Math.abs(d[i]); if (v > mx) mx = v; }
     const hh = Math.max(1, mx * h * 0.95);
@@ -331,40 +340,31 @@ function encodeMp3(lamejs, left, right, sr, kbps) {
   const e = enc.flush(); if (e.length) out.push(new Uint8Array(e));
   return new Blob(out, { type: 'audio/mpeg' });
 }
-async function exportFile() {
-  if (!buffer) return;
-  const btn = $('export'), st = $('exportStatus'), fmt = $('fmt').value;
+async function saveFile() {
+  if (!mastered) return;
+  const btn = $('save'), fmt = $('fmt').value;
   btn.disabled = true;
   try {
-    let g = params.gain;
-    if (params.auto) { st.textContent = 'ラウドネスを測定中…'; g = (await computeAutoGain(buffer, params)).gainDb; }
-    st.textContent = 'マスタリング処理中…';
-    const out = await renderChain(buffer, params, { makeupDb: g, limiter: true });
-    const ch = [out.getChannelData(0), out.getChannelData(1)];
-    const lufs = bufferLoudness(out), peak = samplePeakDb(out);
+    const ch = [mastered.getChannelData(0), mastered.getChannelData(1)];
     let blob, ext;
     if (fmt.startsWith('mp3')) {
-      st.textContent = 'MP3にエンコード中…';
+      stat('saveStatus', 'MP3にエンコード中…');
+      await tick();
       const lame = await loadLame();
-      blob = encodeMp3(lame, ch[0], ch[1], out.sampleRate, +fmt.split('-')[1]); ext = 'mp3';
+      blob = encodeMp3(lame, ch[0], ch[1], mastered.sampleRate, +fmt.split('-')[1]); ext = 'mp3';
     } else {
-      blob = encodeWav(ch, out.sampleRate, fmt === 'wav24' ? 24 : 16); ext = 'wav';
+      blob = encodeWav(ch, mastered.sampleRate, fmt === 'wav24' ? 24 : 16); ext = 'wav';
     }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${fileName}_mastered.${ext}`;
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    st.textContent = `完了: ${fmtDb(lufs)} LUFS ／ ピーク ${fmtDb(peak)} dB`;
+    stat('saveStatus', `保存しました: ${a.download}（${(blob.size / 1048576).toFixed(1)} MB）`, 'ok');
   } catch (e) {
-    console.error(e); st.textContent = `失敗: ${e.message}`;
+    console.error(e); stat('saveStatus', `失敗: ${e.message}`, 'stale');
   }
-  btn.disabled = false;
+  btn.disabled = !mastered || busy;
 }
 
 // ---------------- 配線 ----------------
-function setAB(mode) {
-  abMode = mode;
-  $('abA').classList.toggle('on', mode === 'A'); $('abB').classList.toggle('on', mode === 'B');
-  applyChain();
-}
 buildControls(); buildPresets(); buildChips(); refreshUI();
 $('pick').addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', e => loadFile(e.target.files[0]));
@@ -377,7 +377,7 @@ $('stop').addEventListener('click', stop);
 $('loop').addEventListener('change', () => { if (src) src.loop = $('loop').checked; });
 wave.addEventListener('click', e => seek((e.clientX - wave.getBoundingClientRect().left) / wave.clientWidth));
 $('abA').addEventListener('click', () => setAB('A')); $('abB').addEventListener('click', () => setAB('B'));
-$('match').addEventListener('change', () => applyChain());
+$('match').addEventListener('change', () => { if (outGain) outGain.gain.value = levelMatchGain(); });
 $('nlApply').addEventListener('click', applyNl);
 $('nl').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && (e.ctrlKey || e.metaKey || !e.shiftKey)) { e.preventDefault(); applyNl(); } });
 $('nlUndo').addEventListener('click', () => {
@@ -385,7 +385,8 @@ $('nlUndo').addEventListener('click', () => {
   setAll(prev, { keepUndo: false }); $('nlUndo').disabled = undoStack.length === 0; log('↩ 元に戻しました', 'note');
 });
 $('reset').addEventListener('click', () => { activePreset = null; $('presetdesc').textContent = ''; setAll({ ...defaults(), auto: params.auto }); });
-$('export').addEventListener('click', exportFile);
+$('master').addEventListener('click', runMaster);
+$('save').addEventListener('click', saveFile);
 addEventListener('keydown', e => {
   if (e.code === 'Space' && !/INPUT|TEXTAREA|SELECT|BUTTON/.test(document.activeElement.tagName)) { e.preventDefault(); if (buffer) (playing ? pause() : play()); }
 });

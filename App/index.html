@@ -32,8 +32,8 @@
       <span class="time" id="time">0:00 / 0:00</span>
       <span class="spacer"></span>
       <div class="ab" role="group" aria-label="A/B比較">
-        <button class="btn on" id="abB" type="button">マスタリング後</button>
-        <button class="btn" id="abA" type="button">元の音</button>
+        <button class="btn" id="abB" type="button" disabled>マスタリング後</button>
+        <button class="btn on" id="abA" type="button">元の音</button>
       </div>
       <label class="chk" title="元の音の音量を、マスタリング後に合わせて比較します"><input type="checkbox" id="match" checked> 音量を揃える</label>
     </div>
@@ -41,7 +41,7 @@
       <canvas id="spec" height="120" aria-label="スペクトラム"></canvas>
       <div class="stats" id="stats">
         <div><span>元の音</span><b id="stOrig">—</b></div>
-        <div><span>仕上がり（目標）</span><b id="stOut">—</b></div>
+        <div><span>仕上がり</span><b id="stOut">—</b></div>
         <div><span>ピーク</span><b id="stPeak">−∞ dB</b></div>
       </div>
     </div>
@@ -56,7 +56,7 @@
 
   <section class="card">
     <h2>② 言葉で音を調整</h2>
-    <p class="muted">日本語・英語で指示してください（例: 「低音を少し上げて」「こもっているので明るく」「bass +3dB」）。現在の設定に上乗せされます。</p>
+    <p class="muted">日本語・英語で指示してください（例: 「低音を少し上げて」「こもっているので明るく」「bass +3dB」）。現在の設定に上乗せされます。調整後は「④ マスタリング開始」を押してください。</p>
     <div class="nlrow">
       <textarea id="nl" rows="2" placeholder="例: スマホで聴くので低音をしっかり聴こえるようにして、ボーカルを前に出して"></textarea>
       <div class="nlbtns">
@@ -73,8 +73,21 @@
     <div id="controls" class="controls"></div>
   </section>
 
+  <section class="card master">
+    <h2>④ マスタリング</h2>
+    <p class="muted">上の条件（視聴条件・言葉・パラメーター）で、曲全体を自動でマスタリングします。</p>
+    <div class="exportrow">
+      <button class="btn primary big" id="master" type="button" disabled>🎚 マスタリング開始</button>
+      <span id="masterStatus" class="muted" aria-live="polite">先に音楽ファイルを選んでください。</span>
+    </div>
+    <div class="result" id="result" hidden>
+      <p class="muted" id="resultInfo"></p>
+      <p class="muted">上の「マスタリング後 / 元の音」で聴き比べてから、気に入ったら保存してください。</p>
+    </div>
+  </section>
+
   <section class="card">
-    <h2>④ 書き出し</h2>
+    <h2>⑤ 保存</h2>
     <div class="exportrow">
       <label>形式
         <select id="fmt">
@@ -84,8 +97,8 @@
           <option value="mp3-192">MP3 192kbps</option>
         </select>
       </label>
-      <button class="btn primary" id="export" type="button" disabled>マスタリングして保存</button>
-      <span id="exportStatus" class="muted" aria-live="polite"></span>
+      <button class="btn primary" id="save" type="button" disabled>💾 保存（ダウンロード）</button>
+      <span id="saveStatus" class="muted" aria-live="polite"></span>
     </div>
   </section>
 </main>

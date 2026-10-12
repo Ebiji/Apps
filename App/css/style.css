@@ -79,3 +79,10 @@ select { background: var(--bg); color: var(--text); border: 1px solid var(--line
   .nlrow { flex-direction: column; }
   .nlbtns { grid-auto-flow: column; }
 }
+
+.btn.big { padding: 12px 26px; font-size: 16px; }
+.master { border-color: var(--accent); }
+.result { margin-top: 8px; }
+.result p { margin: 2px 0; }
+.stale { color: var(--warn); }
+.ok { color: var(--ok); }
