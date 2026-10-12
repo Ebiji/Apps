@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suno Mastering Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%235b9dff%27/%3E%3Cpath d=%27M6 16h3l2-8 4 16 3-12 2 4h6%27 stroke=%27white%27 stroke-width=%272.5%27 fill=%27none%27 stroke-linecap=%27round%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Suno Mastering Studio</h1>
+    <p>SUNOで生成した MP3 / WAV を、聴く環境に合わせてブラウザ内でマスタリング。音声ファイルは外部に送信されません。</p>
+  </div>
+</header>
+
+<main>
+  <section class="card drop" id="drop">
+    <input type="file" id="file" accept=".mp3,.wav,audio/mpeg,audio/wav,audio/x-wav" hidden>
+    <button class="btn primary" id="pick" type="button">音楽ファイルを選ぶ</button>
+    <span class="muted">または MP3 / WAV をここにドロップ</span>
+    <span id="fileinfo" class="fileinfo"></span>
+  </section>
+
+  <section class="card" id="player">
+    <canvas id="wave" height="110" aria-label="波形（クリックでシーク）"></canvas>
+    <div class="transport">
+      <button class="btn" id="play" type="button" disabled>▶ 再生</button>
+      <button class="btn" id="stop" type="button" disabled>■</button>
+      <label class="chk"><input type="checkbox" id="loop"> ループ</label>
+      <span class="time" id="time">0:00 / 0:00</span>
+      <span class="spacer"></span>
+      <div class="ab" role="group" aria-label="A/B比較">
+        <button class="btn on" id="abB" type="button">マスタリング後</button>
+        <button class="btn" id="abA" type="button">元の音</button>
+      </div>
+      <label class="chk" title="元の音の音量を、マスタリング後に合わせて比較します"><input type="checkbox" id="match" checked> 音量を揃える</label>
+    </div>
+    <div class="meters">
+      <canvas id="spec" height="120" aria-label="スペクトラム"></canvas>
+      <div class="stats" id="stats">
+        <div><span>元の音</span><b id="stOrig">—</b></div>
+        <div><span>仕上がり（目標）</span><b id="stOut">—</b></div>
+        <div><span>ピーク</span><b id="stPeak">−∞ dB</b></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>① 視聴条件</h2>
+    <p class="muted">どこで聴くかを選ぶと、その環境で足りない帯域や出過ぎる帯域を補正します。</p>
+    <div class="presets" id="presets"></div>
+    <p class="presetdesc" id="presetdesc"></p>
+  </section>
+
+  <section class="card">
+    <h2>② 言葉で音を調整</h2>
+    <p class="muted">日本語・英語で指示してください（例: 「低音を少し上げて」「こもっているので明るく」「bass +3dB」）。現在の設定に上乗せされます。</p>
+    <div class="nlrow">
+      <textarea id="nl" rows="2" placeholder="例: スマホで聴くので低音をしっかり聴こえるようにして、ボーカルを前に出して"></textarea>
+      <div class="nlbtns">
+        <button class="btn primary" id="nlApply" type="button">適用</button>
+        <button class="btn" id="nlUndo" type="button" disabled>元に戻す</button>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <ul class="log" id="nlLog" aria-live="polite"></ul>
+  </section>
+
+  <section class="card">
+    <div class="sechead"><h2>③ 詳細パラメーター</h2><button class="btn small" id="reset" type="button">すべてリセット</button></div>
+    <div id="controls" class="controls"></div>
+  </section>
+
+  <section class="card">
+    <h2>④ 書き出し</h2>
+    <div class="exportrow">
+      <label>形式
+        <select id="fmt">
+          <option value="wav16">WAV 16bit（ディザ付き）</option>
+          <option value="wav24">WAV 24bit</option>
+          <option value="mp3-320">MP3 320kbps</option>
+          <option value="mp3-192">MP3 192kbps</option>
+        </select>
+      </label>
+      <button class="btn primary" id="export" type="button" disabled>マスタリングして保存</button>
+      <span id="exportStatus" class="muted" aria-live="polite"></span>
+    </div>
+  </section>
+</main>
+
+<footer class="muted">処理はすべてお使いのブラウザ内（Web Audio API）で行われます。 ヘッドホン使用時は音量にご注意ください。</footer>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
