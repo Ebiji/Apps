@@ -18,6 +18,22 @@ export const PARAMS = {
 
   loudness: { label: '目標ラウドネス',        min: -24, max: -6,  step: 0.5,  unit: 'LUFS', def: -14, nlp: 2,   group: 'out' },
   ceiling:  { label: 'ピーク上限',            min: -3,  max: -0.1, step: 0.1, unit: 'dBTP', def: -1,  nlp: 0.5, group: 'out' },
+  apDepth:  { label: 'オートパン: 深さ',        min: 0, max: 1,  step: 0.01, unit: '',   def: 0,   nlp: 0.3, group: 'fx' },
+  apRate:   { label: 'オートパン: 速さ',        min: 0.05, max: 10, step: 0.05, unit: 'Hz', def: 0.5, nlp: 0.3, group: 'fx' },
+
+  filterType: { label: 'フィルター: 種類', min: 0, max: 3, step: 1, unit: '', def: 0, nlp: 1, group: 'fx',
+                options: [[0, 'オフ'], [1, 'ローパス'], [2, 'ハイパス'], [3, 'バンドパス']] },
+  filterFreq: { label: 'フィルター: カットオフ', min: 40, max: 18000, step: 1, unit: 'Hz', def: 2000, nlp: 500, group: 'fx', log: true },
+  filterQ:    { label: 'フィルター: レゾナンス', min: 0, max: 18, step: 0.1, unit: 'dB', def: 4, nlp: 3, group: 'fx' },
+  filterMix:  { label: 'フィルター: 効き具合',   min: 0, max: 1, step: 0.01, unit: '', def: 1, nlp: 0.25, group: 'fx' },
+  filterLfo:  { label: 'フィルター: スイープ幅', min: 0, max: 3, step: 0.05, unit: 'oct', def: 0, nlp: 0.5, group: 'fx' },
+  filterRate: { label: 'フィルター: スイープ速さ', min: 0.05, max: 8, step: 0.05, unit: 'Hz', def: 0.5, nlp: 0.3, group: 'fx' },
+
+  phaserMix:      { label: 'フェイザー: 量',     min: 0, max: 1,    step: 0.01, unit: '',   def: 0,   nlp: 0.25, group: 'fx' },
+  phaserRate:     { label: 'フェイザー: 速さ',   min: 0.05, max: 5, step: 0.05, unit: 'Hz', def: 0.4, nlp: 0.3,  group: 'fx' },
+  phaserDepth:    { label: 'フェイザー: 深さ',   min: 0, max: 1,    step: 0.01, unit: '',   def: 0.6, nlp: 0.2,  group: 'fx' },
+  phaserFeedback: { label: 'フェイザー: フィードバック', min: 0, max: 0.85, step: 0.01, unit: '', def: 0.4, nlp: 0.15, group: 'fx' },
+
   gain:     { label: '出力ゲイン（手動）',    min: -12, max: 12,  step: 0.1,  unit: 'dB',   def: 0,   nlp: 2,   group: 'out' },
 };
 
@@ -25,6 +41,7 @@ export const GROUPS = {
   eq: 'イコライザー',
   enh: 'エンハンサー',
   dyn: 'ダイナミクス / ステレオ',
+  fx: 'エフェクト（オートパン / フィルター / フェイザー）',
   out: '出力',
 };
 
@@ -97,4 +114,7 @@ export const EXAMPLES = [
   'ステレオをもっと広げて',
   'warmer, bass +3dB, cut harsh highs',
   '車で聴く用に、-12LUFSで',
+  'フェイザーをかけて、オートパンを少し',
+  'ローパスフィルターで1000Hzにして',
+  'ワウをかけて',
 ];

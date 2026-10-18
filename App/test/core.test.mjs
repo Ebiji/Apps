@@ -75,3 +75,20 @@ test('WAVヘッダ', async () => {
   const u = new Uint8Array(await b.arrayBuffer());
   assert.equal(String.fromCharCode(...u.slice(0, 4)), 'RIFF');
 });
+
+test('エフェクト: フェイザー / オートパン / フィルター', () => {
+  assert.ok(run('フェイザーをかけて').params.phaserMix > 0);
+  assert.ok(run('オートパンをかけて').params.apDepth > 0);
+  const lp = run('ローパスフィルターで1000Hzにして').params;
+  assert.equal(lp.filterType, 1); assert.equal(lp.filterFreq, 1000);
+  assert.equal(run('ハイパスフィルター').params.filterType, 2);
+  const wah = run('ワウをかけて').params; assert.equal(wah.filterType, 3); assert.ok(wah.filterLfo > 0);
+  assert.equal(run('フィルタースイープ').params.filterType, 1);
+  // ハイパス単体は従来どおりローカット
+  const hp = run('ハイパスを上げて').params; assert.ok(hp.hp > 25); assert.equal(hp.filterType, 0);
+  assert.equal(run('低音を上げて').params.phaserMix, 0);
+});
+test('エフェクトの既定値は全てオフ', () => {
+  const d = defaults();
+  assert.equal(d.apDepth, 0); assert.equal(d.filterType, 0); assert.equal(d.phaserMix, 0);
+});

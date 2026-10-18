@@ -91,3 +91,4 @@ select { background: var(--bg); color: var(--text); border: 1px solid var(--line
 .ab { flex-wrap: nowrap; }
 .ab .btn:not(:first-child):not(:last-child) { border-radius: 0; margin-left: -1px; }
 input[type=text] { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; margin-left: 6px; }
+.row select { grid-column: 1 / 2; width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; margin: 0; }

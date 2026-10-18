@@ -15,7 +15,7 @@ const PRESET_WORDS = [
   ['hifi',       /オーディオ|hi-?fi|ハイファイ|スピーカー|ホームシアター/],
 ];
 
-const UP = /上げ|あげ|増や|ふやし|強め|強く|強調|強化|足し|アップ|ブースト|持ち上げ|出して|立たせ|前に|大きく|boost|increase|raise|more|\bup\b|louder|add|\+/;
+const UP = /かけ|掛け|付け|つけ|入れ|加え|追加|上げ|あげ|増や|ふやし|強め|強く|強調|強化|足し|アップ|ブースト|持ち上げ|出して|立たせ|前に|大きく|boost|increase|raise|more|\bup\b|louder|add|\+/;
 const DOWN = /下げ|さげ|減ら|へらし|弱め|弱く|抑え|おさえ|カット|削|ダウン|控えめ|絞|cut|reduce|lower|less|\bdown\b|decrease|tame|soften|[-−－]/;
 const LACK = /足りない|不足|弱すぎ|薄すぎ|聴こえない|聞こえない|聴こえにく|聞こえにく|lack|too\s+(weak|thin|quiet)|not enough/;
 const EXCESS = /出すぎ|強すぎ|多すぎ|効きすぎ|効き過ぎ|出過ぎ|強過ぎ|すぎ|過ぎ|too\s+(much|loud|strong|boomy|heavy)/;
@@ -36,8 +36,10 @@ const DIRECTIONAL = [
   { re: /中低域|量感|厚み|low\s*mids?/,                                   key: 'lowmid' },
   { re: /中音|中域|ミッド|\bmids?\b|midrange/,                            key: 'mid' },
   { re: /ボーカル|ヴォーカル|歌声|歌|声|vocals?|voice|presence|抜け/,     key: 'presence' },
-  { re: /高音|高域|トレブル|ハイ(?!ブリッド)|treble|\bhighs?\b|top\s*end/, key: 'treble' },
+  { re: /高音|高域|トレブル|ハイ(?!ブリッド|パス)|treble|\bhighs?\b|top\s*end/, key: 'treble' },
   { re: /空気感|エアー?|air\b|シマー|きらめき/,                            key: 'air', extra: { exciter: 0.08 } },
+  { re: /フェイザー|フェーザー|phaser/,                                   key: 'phaserMix' },
+  { re: /オートパン|auto-?pan|パンニング/,                                key: 'apDepth' },
   { re: /ステレオ幅|ステレオ|広がり|音場|幅|stereo|width|space/,          key: 'width' },
   { re: /音圧|パンチ|ラウドネス|音量|loudness|volume|punch/,              key: 'loudness', extra: { comp: 0.05 } },
   { re: /ダイナミクス|ダイナミックレンジ|dynamics?/,                      key: 'comp', invert: true },
@@ -47,7 +49,13 @@ const DIRECTIONAL = [
 ];
 
 // 形容詞・状態表現の「効果ベクトル」型。problem=true は「悪い状態の訴え」で、常に“直す”方向に働く。
+// set: 値をそのまま設定（種類の選択など）。hz: 文中の「800Hz」「2kHz」をそのパラメーターに反映。
 const ADJECTIVES = [
+  { re: /フィルタースイープ|フィルターをスイープ|filter\s*sweep|スイープ/, set: { filterType: 1, filterFreq: 1200, filterQ: 8, filterMix: 1, filterLfo: 1.5, filterRate: 0.4 }, hz: 'filterFreq', msg: 'フィルタースイープ（ローパス＋LFO）' },
+  { re: /ワウ|wah/, set: { filterType: 3, filterFreq: 800, filterQ: 10, filterMix: 1, filterLfo: 1.2, filterRate: 1.2 }, hz: 'filterFreq', msg: 'ワウ（バンドパス＋LFO）' },
+  { re: /ハイパスフィルター|high\s*pass\s*filter/, set: { filterType: 2, filterFreq: 400, filterMix: 1, filterLfo: 0 }, hz: 'filterFreq', msg: 'ハイパスフィルター' },
+  { re: /バンドパス|band\s*pass/, set: { filterType: 3, filterFreq: 1000, filterQ: 6, filterMix: 1, filterLfo: 0 }, hz: 'filterFreq', msg: 'バンドパスフィルター' },
+  { re: /ローパスフィルター|ローパス|low\s*pass|フィルター|filter/, set: { filterType: 1, filterFreq: 3000, filterMix: 1, filterLfo: 0 }, hz: 'filterFreq', msg: 'ローパスフィルター' },
   { re: /暗い|こもっ|こもり|こもる|曇|くぐも|muffled|muddy|boxy|dull/, problem: true,
     fx: { lowmid: -2, presence: 2, treble: 1.5, air: 0.5 }, msg: 'こもりを解消' },
   { re: /明るすぎ|キンキン|耳に痛い|刺さ|うるさい|きつい|ざらつ|歯擦|harsh|sibilan|shrill|piercing|brittle/, problem: true,
@@ -105,6 +113,7 @@ export function interpret(text, current) {
   const out = { ...(current || defaults()) };
   const before = { ...out };
   const notes = [];
+  const sets = {}; // key -> 直接設定する値
   const acc = {}; // key -> 変更量の合計（プリセット後に加算）
   const add = (key, delta) => { acc[key] = (acc[key] || 0) + delta; };
   let presetId = null;
@@ -166,6 +175,14 @@ export function interpret(text, current) {
 
       if (f.kind === 'adj') {
         const { def } = f;
+        if (def.set) {
+          for (const [k, v] of Object.entries(def.set)) sets[k] = v;
+          const hz = clause.match(/(\d+(?:\.\d+)?)\s*(khz|hz|ヘルツ)/);
+          if (def.hz && hz) sets[def.hz] = parseFloat(hz[1]) * (hz[2] === 'khz' ? 1000 : 1);
+          for (const [k, amt] of Object.entries(def.fx || {})) add(k, amt * mag);
+          notes.push(def.msg);
+          return;
+        }
         let sign = 1;
         if (!def.problem && (dir < 0 || (EXCESS.test(after) && !LACK.test(after)))) sign = -1;
         for (const [key, amt] of Object.entries(def.fx)) add(key, amt * mag * sign);
@@ -193,6 +210,7 @@ export function interpret(text, current) {
     });
   }
 
+  for (const [k, v] of Object.entries(sets)) out[k] = clampParam(k, v);
   for (const [key, delta] of Object.entries(acc)) {
     out[key] = clampParam(key, +(out[key] + delta).toFixed(3));
   }

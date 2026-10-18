@@ -161,9 +161,13 @@ function buildControls() {
     for (const [key, d] of Object.entries(PARAMS)) {
       if (d.group !== gid) continue;
       const row = document.createElement('div'); row.className = 'row';
-      row.innerHTML = `<label for="p_${key}">${d.label}</label><input type="range" id="p_${key}" min="${d.min}" max="${d.max}" step="${d.step}"><output></output>`;
-      const input = row.querySelector('input'), out = row.querySelector('output');
-      input.addEventListener('input', () => { setParam(key, parseFloat(input.value), true); });
+      const ctl = d.options
+        ? `<select id="p_${key}">${d.options.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>`
+        : d.log ? `<input type="range" id="p_${key}" min="0" max="1000" step="1">`
+        : `<input type="range" id="p_${key}" min="${d.min}" max="${d.max}" step="${d.step}">`;
+      row.innerHTML = `<label for="p_${key}">${d.label}</label>${ctl}<output></output>`;
+      const input = row.querySelector('input,select'), out = row.querySelector('output');
+      input.addEventListener(d.options ? 'change' : 'input', () => { setParam(key, fromSlider(key, input.value), true); });
       input.addEventListener('dblclick', () => setParam(key, d.def, true));
       rows[key] = { row, input, out };
       g.append(row);
@@ -172,13 +176,23 @@ function buildControls() {
   }
   $('auto').addEventListener('change', e => { params.auto = e.target.checked; refreshUI(); markStale(); });
 }
+function toSlider(key, v) {
+  const d = PARAMS[key];
+  return d.log ? 1000 * Math.log(v / d.min) / Math.log(d.max / d.min) : v;
+}
+function fromSlider(key, raw) {
+  const d = PARAMS[key], x = parseFloat(raw);
+  return d.log ? Math.round(d.min * Math.pow(d.max / d.min, x / 1000)) : x;
+}
 function fmtVal(key, v) {
-  const d = PARAMS[key]; const n = d.step >= 1 ? v.toFixed(0) : d.step >= 0.1 ? v.toFixed(1) : v.toFixed(2);
+  const d = PARAMS[key];
+  if (d.options) return (d.options.find(o => o[0] === v) || d.options[0])[1];
+  if (d.unit === 'Hz' && v >= 1000) return `${(v / 1000).toFixed(2)} kHz`; const n = d.step >= 1 ? v.toFixed(0) : d.step >= 0.1 ? v.toFixed(1) : v.toFixed(2);
   return `${v > 0 && d.unit === 'dB' ? '+' : ''}${n}${d.unit ? ' ' + d.unit : ''}`;
 }
 function refreshUI() {
   for (const [key, r] of Object.entries(rows)) {
-    r.input.value = params[key]; r.out.textContent = fmtVal(key, params[key]);
+    r.input.value = toSlider(key, params[key]); r.out.textContent = fmtVal(key, params[key]);
   }
   $('auto').checked = params.auto;
   rows.loudness.row.classList.toggle('disabled', !params.auto);

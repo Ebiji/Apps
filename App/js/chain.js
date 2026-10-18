@@ -75,6 +75,34 @@ export function createChain(ctx) {
   mBus.connect(merge, 0, 0); sPos.connect(merge, 0, 0);
   mBus.connect(merge, 0, 1); sNeg.connect(merge, 0, 1);
 
+  // --- エフェクト（既定は全てオフ = 素通し） ---
+  const lfo = (f = 0.5) => { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.start(); return o; };
+
+  // オートパン: L/R のゲインを逆位相のLFOで揺らす
+  const apIn = gain(1), apSplit = ctx.createChannelSplitter(2), apMerge = ctx.createChannelMerger(2);
+  const apL = gain(1), apR = gain(1), apOsc = lfo(0.5), apDL = gain(0), apDR = gain(0);
+  merge.connect(apIn); apIn.connect(apSplit); apSplit.connect(apL, 0); apSplit.connect(apR, 1);
+  apOsc.connect(apDL); apOsc.connect(apDR); apDL.connect(apL.gain); apDR.connect(apR.gain);
+  apL.connect(apMerge, 0, 0); apR.connect(apMerge, 0, 1);
+
+  // フィルター: ローパス / ハイパス / バンドパス + LFOスイープ（カットオフを周期的に動かす）
+  const fIn = gain(1), fDry = gain(1), fWet = gain(0), fOut = gain(1);
+  const filt = bq('lowpass', 2000, 4), fOsc = lfo(0.5), fOscG = gain(0);
+  apMerge.connect(fIn); fIn.connect(fDry); fDry.connect(fOut);
+  fIn.connect(filt); filt.connect(fWet); fWet.connect(fOut);
+  fOsc.connect(fOscG); fOscG.connect(filt.detune);
+
+  // フェイザー: オールパス6段をLFOで動かして原音と混ぜる（位相の打ち消しで動くノッチ）＋フィードバック
+  const pIn = gain(1), pDry = gain(1), pWet = gain(0), pOut = gain(1);
+  const stages = [400, 700, 1200, 2000, 3200, 5000].map(f => bq('allpass', f, 0.6));
+  const pOsc = lfo(0.4), pOscG = gain(0), pFb = gain(0), pDelay = ctx.createDelay(0.1);
+  pDelay.delayTime.value = 0.003;
+  fOut.connect(pIn); pIn.connect(pDry); pDry.connect(pOut);
+  pIn.connect(stages[0]); stages.forEach((st, i) => { if (i) stages[i - 1].connect(st); pOscG.connect(st.detune); });
+  pOsc.connect(pOscG);
+  stages[5].connect(pWet); pWet.connect(pOut);
+  stages[5].connect(pFb); pFb.connect(pDelay); pDelay.connect(stages[0]);
+
   // --- ダイナミクス ---
   const comp = ctx.createDynamicsCompressor();
   comp.knee.value = 12; comp.attack.value = 0.015; comp.release.value = 0.25;
@@ -84,7 +112,7 @@ export function createChain(ctx) {
   // 安全装置: 4倍(+12dB)までのレンジを確保するため 1/4 → クリップ → ×4
   const safeIn = gain(0.25), safe = shaper(clipCurve(1)), safeOut = gain(4);
   const output = gain(1);
-  merge.connect(comp); comp.connect(makeup); makeup.connect(lim); lim.connect(safeIn);
+  pOut.connect(comp); comp.connect(makeup); makeup.connect(lim); lim.connect(safeIn);
   safeIn.connect(safe); safe.connect(safeOut); safeOut.connect(output);
 
   let lastClip = null;
@@ -98,6 +126,18 @@ export function createChain(ctx) {
     set(xG.gain, p.exciter * 0.5);
     set(wG.gain, p.warmth * 0.45);
     set(sPos.gain, p.width); set(sNeg.gain, -p.width);
+    // オートパン
+    const d = p.apDepth;
+    set(apL.gain, 1 - d / 2); set(apR.gain, 1 - d / 2); set(apDL.gain, d / 2); set(apDR.gain, -d / 2); set(apOsc.frequency, p.apRate);
+    // フィルター
+    const ft = p.filterType | 0;
+    if (ft > 0) filt.type = ['lowpass', 'lowpass', 'highpass', 'bandpass'][ft];
+    set(filt.frequency, p.filterFreq); set(filt.Q, ft === 3 ? 1 + p.filterQ * 0.6 : p.filterQ);
+    set(fWet.gain, ft > 0 ? p.filterMix : 0); set(fDry.gain, ft > 0 ? 1 - p.filterMix : 1);
+    set(fOscG.gain, ft > 0 ? p.filterLfo * 1200 : 0); set(fOsc.frequency, p.filterRate);
+    // フェイザー
+    set(pWet.gain, p.phaserMix * 0.5); set(pDry.gain, 1 - p.phaserMix * 0.5);
+    set(pOscG.gain, p.phaserDepth * 1800); set(pOsc.frequency, p.phaserRate); set(pFb.gain, p.phaserMix > 0 ? p.phaserFeedback : 0);
     set(comp.threshold, p.comp > 0.01 ? -8 - 16 * p.comp : 0);
     set(comp.ratio, 1 + 5 * p.comp);
     set(makeup.gain, dbToLin(makeupDb));
